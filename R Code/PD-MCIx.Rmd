@@ -323,6 +323,36 @@ return(df)
 
 ```
 
+#Comorbidity Function
+```{r}
+comorbidityIdentifier <- function(df, type = "broad", base_name = "comorb") {
+  # Identify all columns that match the base_name
+  comorb_cols <- grep(paste0("^", base_name), names(df), value = TRUE)
+  
+  df$comorbidities <- apply(df[comorb_cols], 1, function(row) {
+    unique_comorbs <- unique(na.omit(row))
+    if (length(unique_comorbs) == 0) {
+      return("None")
+    } else {
+      return(paste(unique_comorbs, collapse = "; "))
+    }
+  })
+
+  df$suggestions <- if (type == "strict") {
+    ifelse(df$comorbidities == "None",
+           "No notable comorbidities.",
+           "Refer to specialist.")
+  } else if (type == "broad") {
+    ifelse(df$comorbidities == "None",
+           "No action needed.",
+           paste("Consider follow-up for:", df$comorbidities))
+  } else {
+    stop("Invalid type. Use 'broad' or 'strict'.")
+  }
+
+  return(df)
+}
+```
 
 
 #Example Usage
