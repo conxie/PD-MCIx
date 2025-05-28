@@ -143,6 +143,8 @@ if (!is.null(visuoSpatThree)) {
 if (!is.null(languageThree)) {
   df <- df %>% mutate(languageThree_vec = .data[[languageThree]])
 }
+  
+  
 
   # Neuropsychological impairments
   df <- df %>%
@@ -254,14 +256,32 @@ df <- df %>%
     Subjective_impaired = if_else(Subjective_total >= 1, 1, 0),
     Functional_total = rowSums(select(., starts_with("Functional") & ends_with("impairment")), na.rm = TRUE),
     Functional_impaired = if_else(Functional_total >= 1, 1, 0),
-    missingValues = apply(select(., contains("impaired"), contains("CogFunc")), 1, function(row) {
+    
+    #missing values code
+    missingValues = apply(select(
+      .,
+      attentionOne_impaired,
+      attentionTwo_impaired,
+      memoryOne_impaired,
+      memoryTwo_impaired,
+      execuFuncOne_impaired,
+      execuFuncTwo_impaired,
+      visuoSpatOne_impaired,
+      visuoSpatTwo_impaired,
+      languageOne_impaired,
+      languageTwo_impaired,
+      starts_with("Subjective") & ends_with("impairment"),
+      starts_with("Functional") & ends_with("impairment")
+    ), 1, function(row) {
       missing_cols <- names(row)[is.na(row)]
       if (length(missing_cols) > 0) {
-        paste("Patient is missing values in", paste(missing_cols, collapse = ", "))
+        paste("Patient is missing values in",
+              paste(missing_cols, collapse = ", "))
       } else {
         "No missing values"
       }
-    }),
+    }), 
+    #functional, subjective, and cognitive impairment presence 
     AutoDx = case_when(
       NP_impaired == 0 & Subjective_impaired == 0 & Functional_impaired == 0 ~ 0,
       NP_impaired == 1 & Subjective_impaired == 0 & Functional_impaired == 0 ~ 1,
@@ -270,20 +290,49 @@ df <- df %>%
       NP_impaired == 1 & Subjective_impaired == 0 & Functional_impaired == 1 ~ 0,
       NP_impaired == 1 & Subjective_impaired == 1 & Functional_impaired == 0 ~ 1,
       NP_impaired == 0 & Subjective_impaired == 1 & Functional_impaired == 1 ~ 0,
-      NP_impaired == 1 & Subjective_impaired == 1 & Functional_impaired == 1 ~ 0,
+      NP_impaired == 1 & Subjective_impaired == 1 & Functional_impaired == 1 ~ 1,
       TRUE ~ NA_real_
     ),
+    
+    #addition of amenstic vs non-Amnestic classification 
     amnesticStatus = case_when(
       AutoDx == 1 & (memoryOne_impaired == 1 | memoryTwo_impaired == 1) ~ "amnestic",
       AutoDx == 1 ~ "nonAmnestic",
       AutoDx == 0 ~ "noMCI",
       TRUE ~ NA_character_
     ),
+    
+    #addition of single vs multiple domain classification 
     multipleSingle = case_when(
       Attention_impaired + Memory_impaired + Executive_impaired + Visuospatial_impaired + Language_impaired > 1 ~ "Multiple",
        Attention_impaired + Memory_impaired + Executive_impaired + Visuospatial_impaired + Language_impaired < 1 ~ "None",
       TRUE ~ "Single"
-    )
+    ),
+    
+    #addition of reliability measure, 
+      Reliability = round(
+      100 * (
+        rowSums(!is.na(select(., attentionOne_impaired, attentionTwo_impaired,
+                              memoryOne_impaired, memoryTwo_impaired,
+                              execuFuncOne_impaired, execuFuncTwo_impaired,
+                              visuoSpatOne_impaired, visuoSpatTwo_impaired,
+                              languageOne_impaired, languageTwo_impaired,
+                              starts_with("Subjective") & ends_with("impairment"),
+                              starts_with("Functional") & ends_with("impairment")
+        ))) /
+        (
+          length(c("attentionOne_impaired", "attentionTwo_impaired",
+                   "memoryOne_impaired", "memoryTwo_impaired",
+                   "execuFuncOne_impaired", "execuFuncTwo_impaired",
+                   "visuoSpatOne_impaired", "visuoSpatTwo_impaired",
+                   "languageOne_impaired", "languageTwo_impaired")) +
+          sum(grepl("^Subjective.*impairment$", names(.))) +
+          sum(grepl("^Functional.*impairment$", names(.)))
+        )
+      ),
+      1
+    ),
+
   )
 
 # Add multipleSingleDomain separately with rowwise()
@@ -320,312 +369,8 @@ df <- df %>%
 
 return(df)
 }
-
 ```
 
-#PD-MCIx - Subjective Mandatory
-```{r}
-
-# Helper function to handle each type for subjective and functional
-handle_type <- function(df, type, base_name, 
-                        standalone = NULL, standalone_cutoff = NULL, 
-                         cutoff_direction = "less",
-                        series = NULL, series_array = NULL, 
-                        ogsame = NULL) {
-  
-  impairment_col <- paste0(base_name, "_impairment")
-  
- if (type == "standalone") {
-    if (cutoff_direction == "less") {
-      df <- df %>%
-        mutate(
-          !!impairment_col := case_when(
-            .data[[standalone]] <= standalone_cutoff ~ 1,
-            .data[[standalone]] > standalone_cutoff ~ 0,
-            TRUE ~ NA_real_
-          )
-        )
-    } else if (cutoff_direction == "greater") {
-      df <- df %>%
-        mutate(
-          !!impairment_col := case_when(
-            .data[[standalone]] >= standalone_cutoff ~ 1,
-            .data[[standalone]] < standalone_cutoff ~ 0,
-            TRUE ~ NA_real_
-          )
-        )
-    }
-  } else if (type == "series") {
-    # series is vector of column names (strings)
-    df <- df %>%
-      mutate(
-        !!impairment_col := if_else(
-          rowSums(across(all_of(series), ~ .x %in% series_array)) == length(series),
-          1, 0
-        )
-      )
-    
-  } else if (type == "OGSame") {
-    # ogsame is a logical or numeric vector with impairment flags
-    df <- df %>%
-      mutate(
-        !!impairment_col := .data[[ogsame]]
-      )
-    
-  } else {
-    # Unknown type or no data
-    df <- df %>%
-      mutate(
-        !!impairment_col := NA_real_
-      )
-  }
-  
-  return(df)
-}
-
-
-# Main function for PD_MCIx
-PD_MCIx <- function(
-  df, 
-  
-  # Neuropsychological Assessment parameters (vectors)
-  attentionOne, attentionOne_cutoff, attentionTwo, attentionTwo_cutoff, 
-  memoryOne, memoryOne_cutoff, memoryTwo, memoryTwo_cutoff, 
-  execuFuncOne, execuFuncOne_cutoff, execuFuncTwo, execuFuncTwo_cutoff, 
-  visuoSpatOne, visuoSpatOne_cutoff, visuoSpatTwo, visuoSpatTwo_cutoff, 
-  languageOne, languageOne_cutoff, languageTwo, languageTwo_cutoff,
-  
-  #tertiary fallback
-  attentionThree = NULL, attentionThree_cutoff = NULL,
-  memoryThree = NULL, memoryThree_cutoff = NULL,
-  execuFuncThree = NULL, execuFuncThree_cutoff = NULL,
-  visuoSpatThree = NULL, visuoSpatThree_cutoff = NULL,
-  languageThree = NULL, languageThree_cutoff = NULL,
-  
-  # Subjective Response parameters with unique cutoff directions
-  type_1, subjectiveOne_standalone, subjectiveOne_standalone_cutoff, subjectiveOne_cutoff_direction, subjectiveOne_Series, subjectiveOne_Series_array, subjectiveOne_OGSame,
-  type_2, subjectiveTwo_standalone, subjectiveTwo_standalone_cutoff, subjectiveTwo_cutoff_direction, subjectiveTwo_Series, subjectiveTwo_Series_array, subjectiveTwo_OGSame,
-  type_3, subjectiveThree_standalone, subjectiveThree_standalone_cutoff, subjectiveThree_cutoff_direction, subjectiveThree_Series, subjectiveThree_Series_array, subjectiveThree_OGSame,
-  type_4, subjectiveFour_standalone, subjectiveFour_standalone_cutoff, subjectiveFour_cutoff_direction, subjectiveFour_Series, subjectiveFour_Series_array, subjectiveFour_OGSame,
-  
-  # Functional Response parameters with unique cutoff directions
-  type_1F, functionalOne_standalone, functionalOne_standalone_cutoff, functionalOne_cutoff_direction, functionalOne_Series, functionalOne_Series_array, functionalOne_OGSame,
-  type_2F, functionalTwo_standalone, functionalTwo_standalone_cutoff, functionalTwo_cutoff_direction, functionalTwo_Series, functionalTwo_Series_array, functionalTwo_OGSame,
-  type_3F, functionalThree_standalone, functionalThree_standalone_cutoff, functionalThree_cutoff_direction, functionalThree_Series, functionalThree_Series_array, functionalThree_OGSame,
-  type_4F, functionalFour_standalone, functionalFour_standalone_cutoff, functionalFour_cutoff_direction, functionalFour_Series, functionalFour_Series_array, functionalFour_OGSame
-) {
-
-  # Add neuropsych vectors as columns for mutate usage
-  df <- df %>%
-  mutate(
-    attentionOne_vec = .data[[attentionOne]],
-    attentionTwo_vec = .data[[attentionTwo]],
-    memoryOne_vec = .data[[memoryOne]],
-    memoryTwo_vec = .data[[memoryTwo]],
-    execuFuncOne_vec = .data[[execuFuncOne]],
-    execuFuncTwo_vec = .data[[execuFuncTwo]],
-    visuoSpatOne_vec = .data[[visuoSpatOne]],
-    visuoSpatTwo_vec = .data[[visuoSpatTwo]],
-    languageOne_vec = .data[[languageOne]],
-    languageTwo_vec = .data[[languageTwo]],
-  )
-  
-  #tertiary fallback
-  if (!is.null(attentionThree)) {
-  df <- df %>% mutate(attentionThree_vec = .data[[attentionThree]])
-}
-if (!is.null(memoryThree)) {
-  df <- df %>% mutate(memoryThree_vec = .data[[memoryThree]])
-}
-if (!is.null(execuFuncThree)) {
-  df <- df %>% mutate(execuFuncThree_vec = .data[[execuFuncThree]])
-}
-if (!is.null(visuoSpatThree)) {
-  df <- df %>% mutate(visuoSpatThree_vec = .data[[visuoSpatThree]])
-}
-if (!is.null(languageThree)) {
-  df <- df %>% mutate(languageThree_vec = .data[[languageThree]])
-}
-
-  # Neuropsychological impairments
-  df <- df %>%
-    rowwise() %>%
-    mutate(
-      # Attention
-      attentionOne_impaired = case_when(
-        !is.na(attentionOne_vec) ~ as.numeric(attentionOne_vec <= attentionOne_cutoff),
-        is.na(attentionOne_vec) & !is.na(attentionThree_vec) ~ as.numeric(attentionThree_vec <= attentionThree_cutoff),
-        TRUE ~ NA_real_
-      ),
-      attentionTwo_impaired = case_when(
-        !is.na(attentionTwo_vec) ~ as.numeric(attentionTwo_vec <= attentionTwo_cutoff),
-        is.na(attentionTwo_vec) & !is.na(attentionThree_vec) ~ as.numeric(attentionThree_vec <= attentionThree_cutoff),
-        TRUE ~ NA_real_
-      ),
-      
-      # Memory
-      memoryOne_impaired = case_when(
-        !is.na(memoryOne_vec) ~ as.numeric(memoryOne_vec <= memoryOne_cutoff),
-        is.na(memoryOne_vec) & !is.na(memoryThree_vec) ~ as.numeric(memoryThree_vec <= memoryThree_cutoff),
-        TRUE ~ NA_real_
-      ),
-      memoryTwo_impaired = case_when(
-        !is.na(memoryTwo_vec) ~ as.numeric(memoryTwo_vec <= memoryTwo_cutoff),
-        is.na(memoryTwo_vec) & !is.na(memoryThree_vec) ~ as.numeric(memoryThree_vec <= memoryThree_cutoff),
-        TRUE ~ NA_real_
-      ),
-      
-      # Executive Function
-      execuFuncOne_impaired = case_when(
-        !is.na(execuFuncOne_vec) ~ as.numeric(execuFuncOne_vec <= execuFuncOne_cutoff),
-        is.na(execuFuncOne_vec) & !is.na(execuFuncThree_vec) ~ as.numeric(execuFuncThree_vec <= execuFuncThree_cutoff),
-        TRUE ~ NA_real_
-      ),
-      execuFuncTwo_impaired = case_when(
-        !is.na(execuFuncTwo_vec) ~ as.numeric(execuFuncTwo_vec <= execuFuncTwo_cutoff),
-        is.na(execuFuncTwo_vec) & !is.na(execuFuncThree_vec) ~ as.numeric(execuFuncThree_vec <= execuFuncThree_cutoff),
-        TRUE ~ NA_real_
-      ),
-      
-      # Visuospatial
-      visuoSpatOne_impaired = case_when(
-        !is.na(visuoSpatOne_vec) ~ as.numeric(visuoSpatOne_vec <= visuoSpatOne_cutoff),
-        is.na(visuoSpatOne_vec) & !is.na(visuoSpatThree_vec) ~ as.numeric(visuoSpatThree_vec <= visuoSpatThree_cutoff),
-        TRUE ~ NA_real_
-      ),
-      visuoSpatTwo_impaired = case_when(
-        !is.na(visuoSpatTwo_vec) ~ as.numeric(visuoSpatTwo_vec <= visuoSpatTwo_cutoff),
-        is.na(visuoSpatTwo_vec) & !is.na(visuoSpatThree_vec) ~ as.numeric(visuoSpatThree_vec <= visuoSpatThree_cutoff),
-        TRUE ~ NA_real_
-      ),
-      
-      # Language
-      languageOne_impaired = case_when(
-        !is.na(languageOne_vec) ~ as.numeric(languageOne_vec <= languageOne_cutoff),
-        is.na(languageOne_vec) & !is.na(languageThree_vec) ~ as.numeric(languageThree_vec <= languageThree_cutoff),
-        TRUE ~ NA_real_
-      ),
-      languageTwo_impaired = case_when(
-        !is.na(languageTwo_vec) ~ as.numeric(languageTwo_vec <= languageTwo_cutoff),
-        is.na(languageTwo_vec) & !is.na(languageThree_vec) ~ as.numeric(languageThree_vec <= languageThree_cutoff),
-        TRUE ~ NA_real_
-      )
-    ) %>%
-    ungroup()
-  
-  
-  # Apply Subjective impairments
-df <- handle_type(df, type_1, "SubjectiveOne", subjectiveOne_standalone, subjectiveOne_standalone_cutoff, subjectiveOne_cutoff_direction, subjectiveOne_Series, subjectiveOne_Series_array, subjectiveOne_OGSame) %>%
-  handle_type(type_2, "SubjectiveTwo", subjectiveTwo_standalone, subjectiveTwo_standalone_cutoff, subjectiveTwo_cutoff_direction, subjectiveTwo_Series, subjectiveTwo_Series_array, subjectiveTwo_OGSame) %>%
-  handle_type(type_3, "SubjectiveThree", subjectiveThree_standalone, subjectiveThree_standalone_cutoff, subjectiveThree_cutoff_direction, subjectiveThree_Series, subjectiveThree_Series_array, subjectiveThree_OGSame) %>%
-  handle_type(type_4, "SubjectiveFour", subjectiveFour_standalone, subjectiveFour_standalone_cutoff, subjectiveFour_cutoff_direction, subjectiveFour_Series, subjectiveFour_Series_array, subjectiveFour_OGSame)
-
-  # Apply Functional impairments
- df <- handle_type(df, type_1F, "FunctionalOne", functionalOne_standalone, functionalOne_standalone_cutoff, functionalOne_cutoff_direction, functionalOne_Series, functionalOne_Series_array, functionalOne_OGSame) %>%
-  handle_type(type_2F, "FunctionalTwo", functionalTwo_standalone, functionalTwo_standalone_cutoff, functionalTwo_cutoff_direction, functionalTwo_Series, functionalTwo_Series_array, functionalTwo_OGSame) %>%
-  handle_type(type_3F, "FunctionalThree", functionalThree_standalone, functionalThree_standalone_cutoff, functionalThree_cutoff_direction, functionalThree_Series, functionalThree_Series_array, functionalThree_OGSame) %>%
-  handle_type(type_4F, "FunctionalFour", functionalFour_standalone, functionalFour_standalone_cutoff, functionalFour_cutoff_direction, functionalFour_Series, functionalFour_Series_array, functionalFour_OGSame)
-
-  
-  # Final calculations
-df <- df %>%
-  mutate(
-    Attention_impaired = attentionOne_impaired + attentionTwo_impaired,
-    Memory_impaired = memoryOne_impaired + memoryTwo_impaired,
-    Executive_impaired = execuFuncOne_impaired + execuFuncTwo_impaired,
-    Visuospatial_impaired = visuoSpatOne_impaired + visuoSpatTwo_impaired,
-    Language_impaired = languageOne_impaired + languageTwo_impaired,
-    NP_impaired = case_when(
-      Attention_impaired >= 2 ~ 1,
-      Memory_impaired >= 2 ~ 1,
-      Executive_impaired >= 2 ~ 1,
-      Visuospatial_impaired >= 2 ~ 1,
-      Language_impaired >= 2 ~ 1,
-      Attention_impaired >= 1 & Memory_impaired >= 1 ~ 1,
-      Attention_impaired >= 1 & Executive_impaired >= 1 ~ 1,
-      Attention_impaired >= 1 & Visuospatial_impaired >= 1 ~ 1,
-      Attention_impaired >= 1 & Language_impaired >= 1 ~ 1,
-      Memory_impaired >= 1 & Executive_impaired >= 1 ~ 1,
-      Memory_impaired >= 1 & Visuospatial_impaired >= 1 ~ 1,
-      Memory_impaired >= 1 & Language_impaired >= 1 ~ 1,
-      Executive_impaired >= 1 & Visuospatial_impaired >= 1 ~ 1,
-      Executive_impaired >= 1 & Language_impaired >= 1 ~ 1,
-      Visuospatial_impaired >= 1 & Language_impaired >= 1 ~ 1,
-      TRUE ~ 0
-    ),
-    Subjective_total = rowSums(select(., starts_with("Subjective")), na.rm = TRUE),
-    Subjective_impaired = if_else(Subjective_total >= 1, 1, 0),
-    Functional_total = rowSums(select(., starts_with("Functional") & ends_with("impairment")), na.rm = TRUE),
-    Functional_impaired = if_else(Functional_total >= 1, 1, 0),
-    missingValues = apply(select(., contains("impaired"), contains("CogFunc")), 1, function(row) {
-      missing_cols <- names(row)[is.na(row)]
-      if (length(missing_cols) > 0) {
-        paste("Patient is missing values in", paste(missing_cols, collapse = ", "))
-      } else {
-        "No missing values"
-      }
-    }),
-    AutoDx = case_when(
-      NP_impaired == 0 & Subjective_impaired == 0 & Functional_impaired == 0 ~ 0,
-      NP_impaired == 1 & Subjective_impaired == 0 & Functional_impaired == 0 ~ 0,
-      NP_impaired == 0 & Subjective_impaired == 1 & Functional_impaired == 0 ~ 0,
-      NP_impaired == 0 & Subjective_impaired == 0 & Functional_impaired == 1 ~ 0,
-      NP_impaired == 1 & Subjective_impaired == 0 & Functional_impaired == 1 ~ 0,
-      NP_impaired == 1 & Subjective_impaired == 1 & Functional_impaired == 0 ~ 1,
-      NP_impaired == 0 & Subjective_impaired == 1 & Functional_impaired == 1 ~ 0,
-      NP_impaired == 1 & Subjective_impaired == 1 & Functional_impaired == 1 ~ 0,
-      TRUE ~ NA_real_
-    ),
-    amnesticStatus = case_when(
-      AutoDx == 1 & (memoryOne_impaired == 1 | memoryTwo_impaired == 1) ~ "amnestic",
-      AutoDx == 1 ~ "nonAmnestic",
-      AutoDx == 0 ~ "noMCI",
-      TRUE ~ NA_character_
-    ),
-    multipleSingle = case_when(
-      Attention_impaired + Memory_impaired + Executive_impaired + Visuospatial_impaired + Language_impaired > 1 ~ "Multiple",
-       Attention_impaired + Memory_impaired + Executive_impaired + Visuospatial_impaired + Language_impaired < 1 ~ "None",
-      TRUE ~ "Single"
-    )
-  )
-
-# Add multipleSingleDomain separately with rowwise()
-multipleSingleDomain_df <- df %>%
-  rowwise() %>%
-  mutate(
-    multipleSingleDomain = paste(
-      c(
-       if (!is.na(Attention_impaired) && Attention_impaired >= 1) "Attention" else NULL,
-        if (!is.na(Memory_impaired) && Memory_impaired >= 1) "Memory" else NULL,
-        if (!is.na(Executive_impaired) && Executive_impaired >= 1) "Executive" else NULL,
-        if (!is.na(Visuospatial_impaired) && Visuospatial_impaired >= 1) "Visuospatial" else NULL,
-        if (!is.na(Language_impaired) && Language_impaired >= 1) "Language" else NULL
-      ),
-      collapse = ", "
-    )
-  ) %>%
-  ungroup() %>%
-  select(multipleSingleDomain)
-
-# Bind the new column back to the original df
-df <- bind_cols(df, multipleSingleDomain_df)
-
-# Relocate columns
-df <- df %>%
-  relocate(NP_impaired, .after = AutoDx) %>%
-  relocate(Subjective_impaired, .after = NP_impaired) %>%
-  relocate(Functional_impaired, .after = Subjective_impaired) %>%
-  relocate(missingValues, .after = Functional_impaired) %>%
-  relocate(AutoDx, .after = missingValues) %>%
-  relocate(amnesticStatus, .after = AutoDx) %>%
-  relocate(multipleSingle, .after = amnesticStatus) %>%
-  relocate(multipleSingleDomain, .after = multipleSingle)
-
-return(df)
-}
-
-```
-```
 
 #Comorbidity Function
 ```{r}
